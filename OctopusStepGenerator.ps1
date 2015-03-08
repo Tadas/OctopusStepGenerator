@@ -40,9 +40,9 @@ function Add-Parameter {
 		$Result
 	}
 
-    Write-Host "$($Parameter.Name.VariablePath.ToString())" -NoNewLine -Background Black -Foreground White
+    Write-Host "$($Parameter.Name.VariablePath.ToString()) ($($Parameter.StaticType.ToString()))" -NoNewLine -Background Black -Foreground White
 
-    # Ignore additional parameters added by PowerShell
+    # --- Ignore additional parameters added by PowerShell
     $PsAdditionalParameters = @("Verbose", "Debug", "ErrorAction", "WarningAction", "ErrorVariable", "WarningVariable",`
         "OutVariable", "OutBuffer", "PipelineVariable")
     if ($Parameter.Name.VariablePath.ToString() -in $PsAdditionalParameters) {
@@ -51,6 +51,7 @@ function Add-Parameter {
     }
 
 
+    # --- Create the object that will hold this parameter
     $StepTemplateParameter = New-Object -TypeName PSObject
     $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name Name -Value $Parameter.Name.VariablePath.ToString()
     $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name Label -Value $Parameter.Name.VariablePath.ToString()
@@ -65,8 +66,23 @@ function Add-Parameter {
                 $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name DefaultValue -Value $Parameter.DefaultValue.Value.ToString()
             }
 
+            "System.Management.Automation.Language.ConstantExpressionAst" { # Default value is an integer?
+                $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name DefaultValue -Value $Parameter.DefaultValue.Value.ToString()
+            }
+
             "System.Management.Automation.Language.VariableExpressionAst" { # Default value is a variable
                 $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name DefaultValue -Value $Parameter.DefaultValue.ToString()
+            }
+
+            "System.Management.Automation.Language.ParenExpressionAst" { # Default value is an array
+                # Split up the array, remove double quotes and join with a commas
+                $ArrayValues = ($Parameter.DefaultValue.Pipeline.ToString() -split "," | Foreach-Object { $_.Trim().Replace('"',"") }) -join ","
+                
+                $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name DefaultValue -Value $ArrayValues
+            }
+
+            default {
+                Write-Host " Unknown default value type: $($Parameter.DefaultValue.GetType().FullName)" -NoNewLine
             }
 
         }
@@ -91,12 +107,19 @@ function Add-Parameter {
                     $ValidValues = Get-PositionalArguments $ParameterAttribute.PositionalArguments 
 
                     Write-Host " (ValidateSet: $($ValidValues -join ", "))" -NoNewLine
-            
-                    # Create the dropdown with possible values
-                    $DisplaySettings = New-Object –TypeName PSObject –Prop (@{"Octopus.ControlType"=""; "Octopus.SelectOptions"= ""})
-                    $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name DisplaySettings -Value $DisplaySettings
-                    $StepTemplateParameter.DisplaySettings."Octopus.ControlType" = "Select"
-                    $StepTemplateParameter.DisplaySettings."Octopus.SelectOptions" = $($ValidValues -join "`n")
+                    
+                    # If the parameter is of array type we have to leave a plain text field. Dropdown would limit the parameter to only one value
+                    if ($Parameter.StaticType.BaseType.Name -ne "Array"){
+                        # Create the dropdown with possible values
+                        $DisplaySettings = New-Object –TypeName PSObject –Prop (@{"Octopus.ControlType"=""; "Octopus.SelectOptions"= ""})
+                        $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name DisplaySettings -Value $DisplaySettings
+                        $StepTemplateParameter.DisplaySettings."Octopus.ControlType" = "Select"
+                        $StepTemplateParameter.DisplaySettings."Octopus.SelectOptions" = $($ValidValues -join "`n")
+                    } else {
+                        # Because the parameter is an array we can't limit the selection with a dropdown. Leave the default text field
+                        # Indicate the possible values in the label, user is reponsible for entering them correctly
+                        $StepTemplateParameter.Label += "[$($ValidValues -join ", ")]" 
+                    }
                 }
 
             "ValidateNotNullOrEmpty" {
@@ -115,12 +138,69 @@ function Add-Parameter {
     $ToStepTemplate.Parameters += $StepTemplateParameter
 }
 
+function Add-BootstrapCode {
+    Param(
+    $Parameters,
+    $StepTemplate
+    )
+
+    <#
+        Genereates and adds code to call the target function when running in the Octopus Tentacle.
+        We're creating a hastable of parameters (skipping not provided parameters) and then using splatting
+        to call the target function using our parameter hastable.
+
+        Knows some basic variable types and converts the Octopus parameter strings to the correct type
+
+        Generated code looks like this:
+            $FunctionParameters = @{}
+            if($OctopusParameters['Name'] -ne $null){$FunctionParameters.Add('Name', $OctopusParameters['Name'])}
+            if($OctopusParameters['Service'] -ne $null){$FunctionParameters.Add('Service', $OctopusParameters['Service'])}
+               ... other remaining parameters...
+            Set-TargetResource @FunctionParameters
+
+    #>
+
+    $BootstrapScript = "`r`n`r`n#---- Auto generated bootstrap by OctopusStepGenerator`r`n`$FunctionParameters = @{}`r`n"
+    foreach ($StepParameter in $Parameters){
+        $ParameterName = $StepParameter.Name.VariablePath.ToString()
+
+        switch($StepParameter.StaticType.ToString()){
+            "System.String" {
+                $BootstrapScript += "if(`$OctopusParameters['$ParameterName'] -ne `$null){`$FunctionParameters.Add('$ParameterName', `$OctopusParameters['$ParameterName'])}`r`n"
+            }
+
+            "System.Boolean" {
+                $BootstrapScript += "if(`$OctopusParameters['$ParameterName'] -ne `$null){`$FunctionParameters.Add('$ParameterName', [System.Convert]::ToBoolean(`$OctopusParameters['$ParameterName']))}`r`n"
+            }
+
+            "System.Int32" {
+                $BootstrapScript += "if(`$OctopusParameters['$ParameterName'] -ne `$null){`$FunctionParameters.Add('$ParameterName', [System.Convert]::ToInt32(`$OctopusParameters['$ParameterName']))}`r`n"
+            }
+
+            default {
+                # Parameter of unknown type, maybe it is an array?
+                if($StepParameter.StaticType.BaseType.Name -eq "Array"){
+                    # The parameter is an array, split with ',' to convert from string
+                    $BootstrapScript += "if(`$OctopusParameters['$ParameterName'] -ne `$null){`$FunctionParameters.Add('$ParameterName', `$(`$OctopusParameters['$ParameterName'] -split ','))}`r`n"
+                } else {
+                    # Not an array either, fall back to string
+                    $BootstrapScript += "if(`$OctopusParameters['$ParameterName'] -ne `$null){`$FunctionParameters.Add('$ParameterName', `$OctopusParameters['$ParameterName'])}`r`n"
+                }
+            }
+        }
+        
+    }
+    $BootstrapScript += "$FunctionName @FunctionParameters"
+        
+    $StepTemplate.Properties."Octopus.Action.Script.ScriptBody" += $BootstrapScript
+}
+
 
 
 # --- START
 try {
     Write-Host "Loading target function $FunctionName from $FileName " -NoNewLine
-        Import-Module $FileName
+        Import-Module $FileName -ErrorAction Stop
         $CommandInfo = Get-Command -Module ([System.IO.Path]::GetFileNameWithoutExtension($FileName)) -Name $FunctionName
 
         # Get everything in the script file. That way we avoid dependency problems
@@ -157,27 +237,7 @@ try {
     
 
     Write-Host "Adding bootstrap code " -NoNewLine
-        <#
-            Genereates and adds code to call the target function when running in the Octopus Tentacle.
-            We're creating a hastable of parameters (skipping not provided parameters) and then using splatting
-            to call the target function using our parameter hastable.
-
-            Generated code looks like this:
-                $FunctionParameters = @{}
-                if($OctopusParameters['Name'] -ne $null){$FunctionParameters.Add('Name', $OctopusParameters['Name'])}
-                if($OctopusParameters['Service'] -ne $null){$FunctionParameters.Add('Service', $OctopusParameters['Service'])}
-                ... other remaining parameters...
-                Set-TargetResource @FunctionParameters
-        #>
-
-        $BootstrapScript = "`r`n`r`n#---- Auto generated boothstrap by OctopusStepGenerator`r`n`$FunctionParameters = @{}`r`n"
-        foreach ($StepParameter in $StepTemplate.Parameters){
-            $BootstrapScript += "if(`$OctopusParameters['$($StepParameter.Name)'] -ne `$null){`$FunctionParameters.Add('$($StepParameter.Name)', `$OctopusParameters['$($StepParameter.Name)'])}`r`n"
-        }
-        $BootstrapScript += "$FunctionName @FunctionParameters"
-        
-        $StepTemplate.Properties."Octopus.Action.Script.ScriptBody" += $BootstrapScript
-
+        Add-BootstrapCode $CommandInfo.ScriptBlock.Ast.Body.ParamBlock.Parameters $StepTemplate 
     Write-Host "☑" -ForegroundColor DarkGreen
 
 
