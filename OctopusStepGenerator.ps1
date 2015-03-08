@@ -111,7 +111,7 @@ function Add-Parameter {
                     # If the parameter is of array type we have to leave a plain text field. Dropdown would limit the parameter to only one value
                     if ($Parameter.StaticType.BaseType.Name -ne "Array"){
                         # Create the dropdown with possible values
-                        $DisplaySettings = New-Object –TypeName PSObject –Prop (@{"Octopus.ControlType"=""; "Octopus.SelectOptions"= ""})
+                        $DisplaySettings = New-Object -TypeName PSObject -Prop (@{"Octopus.ControlType"=""; "Octopus.SelectOptions"= ""})
                         $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name DisplaySettings -Value $DisplaySettings
                         $StepTemplateParameter.DisplaySettings."Octopus.ControlType" = "Select"
                         $StepTemplateParameter.DisplaySettings."Octopus.SelectOptions" = $($ValidValues -join "`n")
