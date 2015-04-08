@@ -3,7 +3,9 @@
 #>
 Param(
 	[string]$FileName = ".\Example modules\DSC_TestResource.psm1",
-    [string]$FunctionName = "Set-TargetResource"
+    [string]$FunctionName = "Set-TargetResource",
+    # Only step code is placed to the keyboard. Useful when only code changes and you want to update the step template.
+    [switch]$CodeOnly
 )
 
 
@@ -56,6 +58,11 @@ function Add-Parameter {
     $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name Name -Value $Parameter.Name.VariablePath.ToString()
     $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name Label -Value $Parameter.Name.VariablePath.ToString()
     $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name HelpText -Value "PowerShell type: $($Parameter.StaticType.ToString())"
+
+    # if this cmdlet parameter is an array we'll use MultiLineText input control
+    if ($Parameter.StaticType.BaseType.Name -eq "Array"){
+        $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name DisplaySettings -Value (New-Object -TypeName PSObject -Prop (@{"Octopus.ControlType"="MultiLineText"}))
+    }
    
     
     # --- Parse default value for this parameter
@@ -75,8 +82,8 @@ function Add-Parameter {
             }
 
             "System.Management.Automation.Language.ParenExpressionAst" { # Default value is an array
-                # Split up the array, remove double quotes and join with a commas
-                $ArrayValues = ($Parameter.DefaultValue.Pipeline.ToString() -split "," | Foreach-Object { $_.Trim().Replace('"',"") }) -join ","
+                # Split up the array, remove double quotes and join with new line symbols (because the default value will be displayed in a multiline edit control)
+                $ArrayValues = ($Parameter.DefaultValue.Pipeline.ToString() -split "," | Foreach-Object { $_.Trim().Replace('"',"") }) -join "`n"
                 
                 $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name DefaultValue -Value $ArrayValues
             }
@@ -118,7 +125,7 @@ function Add-Parameter {
                     } else {
                         # Because the parameter is an array we can't limit the selection with a dropdown. Leave the default text field
                         # Indicate the possible values in the label, user is reponsible for entering them correctly
-                        $StepTemplateParameter.Label += "[$($ValidValues -join ", ")]" 
+                        $StepTemplateParameter.Label += "($($ValidValues -join ", "))" 
                     }
                 }
 
@@ -180,8 +187,8 @@ function Add-BootstrapCode {
             default {
                 # Parameter of unknown type, maybe it is an array?
                 if($StepParameter.StaticType.BaseType.Name -eq "Array"){
-                    # The parameter is an array, split with ',' to convert from string
-                    $BootstrapScript += "if(`$OctopusParameters['$ParameterName'] -ne `$null){`$FunctionParameters.Add('$ParameterName', `$(`$OctopusParameters['$ParameterName'] -split ','))}`r`n"
+                    # The parameter is an array, split it with '`n' (because we get it from MultilineText input joined that way) to convert from string
+                    $BootstrapScript += "if(`$OctopusParameters['$ParameterName'] -ne `$null){`$FunctionParameters.Add('$ParameterName', `$(`$OctopusParameters['$ParameterName'] -split `"``n`"))}`r`n"
                 } else {
                     # Not an array either, fall back to string
                     $BootstrapScript += "if(`$OctopusParameters['$ParameterName'] -ne `$null){`$FunctionParameters.Add('$ParameterName', `$OctopusParameters['$ParameterName'])}`r`n"
@@ -241,9 +248,15 @@ try {
     Write-Host "☑" -ForegroundColor DarkGreen
 
 
-    Write-Host "Writing JSON to clipboard " -NoNewline
-        [Windows.Forms.Clipboard]::SetText($(ConvertTo-Json $StepTemplate -Depth 10))
-    Write-Host "☑" -ForegroundColor DarkGreen
+    if (-not $CodeOnly) {
+        Write-Host "Writing JSON to clipboard " -NoNewline
+            [Windows.Forms.Clipboard]::SetText($(ConvertTo-Json $StepTemplate -Depth 10))
+        Write-Host "☑" -ForegroundColor DarkGreen
+    } else {
+        Write-Host "Writing cmdlet CODE to clipboard " -NoNewline
+            [Windows.Forms.Clipboard]::SetText($StepTemplate.Properties."Octopus.Action.Script.ScriptBody")
+        Write-Host "☑" -ForegroundColor DarkGreen
+    }
 
 } finally {
     Remove-Module ([System.IO.Path]::GetFileNameWithoutExtension($FileName)) -ErrorAction SilentlyContinue
