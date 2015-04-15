@@ -1,18 +1,19 @@
 # OctopusStepGenerator
-Generate Octopus Deploy step templates from PowerShell DSC resources
+Generate Octopus Deploy step templates from PowerShell cmdlets
 
 Supported parameter types:
 
  - [string]
  - [int]
  - [boolean]
- - array (in Octopus use a comma separated list like so: "Value1","Value2")
+ - [switch] (displayed as a checkbox)
+ - arrays (displayed as a multiline input)
 
 Supported parameter attributes:
 
 - [Parameter(Mandatory)]
 - [ValidateNotNullOrEmpty]
-- [ValidateSet("a","b","c")]
+- [ValidateSet("a","b","c")] (displayed as a dropdown)
 
 Bootstrap code is added at the end of the module that puts all the Octopus Deploy parameters in a hastable and uses splatting to call the function in your module:
 
@@ -26,6 +27,4 @@ Bootstrap code is added at the end of the module that puts all the Octopus Deplo
 
 ## TODO
 
- 1. Improve test module
- 2. Better help text for the parameters
- 2. Complex parameter types don't work (credentials and etc.)
+ 1. Complex parameter types don't work (credentials and etc.)

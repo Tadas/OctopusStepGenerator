@@ -30,7 +30,8 @@ function Set-TargetResource{
         [bool]$BooleanParameter,
         [int]$IntegerParameter,
         [string[]]$StringArrayParameter,
-        [int[]]$IntArrayParameter
+        [int[]]$IntArrayParameter,
+        [switch]$SwitchParameter
     )
 
     # Basic comment, hello
@@ -69,6 +70,7 @@ function Set-TargetResource{
 
     Write-Output "`$StringArrayParameter.count = $($StringArrayParameter.count); `$StringArrayParameter = $($StringArrayParameter -join ",")"
     Write-Output "`$IntArrayParameter.count = $($IntArrayParameter.count); `$IntArrayParameter = $($IntArrayParameter -join ",")"
+    Write-Output "`$SwitchParameter is $SwitchParameter"
     Write-Test
 }
 

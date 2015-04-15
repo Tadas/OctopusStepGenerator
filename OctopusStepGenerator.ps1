@@ -1,5 +1,5 @@
 ﻿<#
-    Takes a DSC resource module file as input and generates a ready to run OctopusDeploy Step Template
+    Takes a cmdlet from a PowerShell module file as input and generates a ready to run OctopusDeploy Step Template
 #>
 Param(
 	[string]$FileName = ".\Example modules\DSC_TestResource.psm1",
@@ -133,6 +133,13 @@ function Add-Parameter {
                     Write-Host " (Not null/empty)" -NoNewLine
                     $StepTemplateParameter.Label = "(Not null/empty) " + $StepTemplateParameter.Label
                 }
+            
+            "Switch" {
+                    $DisplaySettings = New-Object -TypeName PSObject -Prop (@{"Octopus.ControlType"=""})
+                    $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name DisplaySettings -Value $DisplaySettings
+                    $StepTemplateParameter.DisplaySettings."Octopus.ControlType" = "Checkbox"
+                
+                }
 
             default {
                     # Unknown parameter attribute
@@ -182,6 +189,10 @@ function Add-BootstrapCode {
 
             "System.Int32" {
                 $BootstrapScript += "if(`$OctopusParameters['$ParameterName'] -ne `$null){`$FunctionParameters.Add('$ParameterName', [System.Convert]::ToInt32(`$OctopusParameters['$ParameterName']))}`r`n"
+            }
+
+            "System.Management.Automation.SwitchParameter" {
+                $BootstrapScript += "if(`$OctopusParameters['$ParameterName'] -ne `$null){`$FunctionParameters.Add('$ParameterName', [System.Convert]::ToBoolean(`$OctopusParameters['$ParameterName']))}`r`n"   
             }
 
             default {
