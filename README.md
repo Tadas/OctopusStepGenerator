@@ -1,20 +1,25 @@
 # OctopusStepGenerator
 Generate Octopus Deploy step templates from PowerShell cmdlets
 
-Supported parameter types:
+## Supported parameter types
 
  - [string]
  - [int]
  - [boolean]
  - [switch] (displayed as a checkbox)
- - arrays (displayed as a multiline input)
+ - arrays (displayed as multiline input)
 
-Supported parameter attributes:
+## Supported parameter attributes
 
 - [Parameter(Mandatory)]
 - [ValidateNotNullOrEmpty]
 - [ValidateSet("a","b","c")] (displayed as a dropdown)
 
+## Comment based help support
+- Function's comment help **.SYNOPSIS** section is used as the step description.
+- **.PARAMETER** descriptions are used in HelpText for the parameter
+
+## Bootstrap code
 Bootstrap code is added at the end of the module that puts all the Octopus Deploy parameters in a hastable and uses splatting to call the function in your module:
 
     ---- Auto generated bootstrap by OctopusStepGenerator

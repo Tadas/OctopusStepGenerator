@@ -8,12 +8,61 @@ Param(
     [switch]$CodeOnly
 )
 
+function Get-FunctionSynopsis{
+<#
+    .SYNOPSIS
+        Gets fuction synopsis from the help comment block like this
+
+    .DESCRIPTION
+        Extracts the first line after the "SYNOPSIS" keyword
+
+    .PARAMETER Function
+        Ast of the function we're looking at
+#>
+    Param(
+        [System.Management.Automation.Language.FunctionDefinitionAst]$Function
+    )
+    # Use a regex, AST seems to not contain comment blocks? CAUTION - regex in use is really lame.
+    # In .NET regex dots match '/r' so we match everything up until the end of the line with [^\r\n]
+    $Result = ([regex]"(?<=<#[\s\S]*)\.SYNOPSIS\s+(?<FunctionSynopsis>[^\r\n]+)").Matches($Function.ToString())
+    if ($Result -ne $null) {
+        $Result.Captures[0].Groups['FunctionSynopsis'].Value
+    }
+}
+
+
+function Get-ParameterDescriptions{
+<#
+    .SYNOPSIS
+        Gets parameter descriptions from the help comment block like this
+
+    .DESCRIPTION
+        Extracts the first lines after the "PARAMETER" keyword
+
+    .PARAMETER Function
+        Ast of the function we're looking at
+#>
+    Param(
+        [System.Management.Automation.Language.FunctionDefinitionAst]$Function
+    )
+
+    # Use a regex, AST seems to not contain comment blocks? CAUTION - regex in use is really lame.
+    # In .NET regex dots match '/r' so we match everything up until the end of the line with [^\r\n]
+    $Result = ([regex]"(?<=<#[\s\S]*)\.PARAMETER (?<ParamName>\w+)\s+(?<ParamDescription>[^\r\n]+)").Matches($Function.ToString())
+    $ParameterDescriptions = @{}
+    foreach($Capture in $Result.Captures){
+        $ParameterDescriptions[$Capture.Groups['ParamName'].Value] = $Capture.Groups['ParamDescription'].Value
+    }
+    $ParameterDescriptions
+}
+
 
 # Parses a parameter and adds it to the Step Template object
 function Add-Parameter {
     Param(
         $ToStepTemplate,
-        [System.Management.Automation.Language.ParameterAst]$Parameter
+        [System.Management.Automation.Language.ParameterAst]$Parameter,
+        $Descriptions
     )
 
     # Tests if named arguments array contains a certain argument (used to test if parameter is Mandatory)
@@ -57,7 +106,12 @@ function Add-Parameter {
     $StepTemplateParameter = New-Object -TypeName PSObject
     $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name Name -Value $Parameter.Name.VariablePath.ToString()
     $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name Label -Value $Parameter.Name.VariablePath.ToString()
-    $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name HelpText -Value "PowerShell type: $($Parameter.StaticType.ToString())"
+    
+    if ($Descriptions[$Parameter.Name.VariablePath.ToString()]){
+        $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name HelpText -Value $Descriptions[$Parameter.Name.VariablePath.ToString()]
+    } else {
+        $StepTemplateParameter | Add-Member -MemberType NoteProperty -Name HelpText -Value "PowerShell type: $($Parameter.StaticType.ToString())"
+    }
 
     # if this cmdlet parameter is an array we'll use MultiLineText input control
     if ($Parameter.StaticType.BaseType.Name -eq "Array"){
@@ -228,12 +282,12 @@ try {
         $ScriptBody = $ScriptBody -ireplace "(Export-ModuleMember)", '#$1'
     Write-Host "☑" -ForegroundColor DarkGreen
 
-
     Write-Host "Creating step template " -NoNewLine
         $StepTemplate = New-Object -TypeName PSObject
         $StepTemplate | Add-Member -MemberType NoteProperty -Name Id -Value ([System.IO.Path]::GetFileNameWithoutExtension($FileName))
         $StepTemplate | Add-Member -MemberType NoteProperty -Name Name -Value "$([System.IO.Path]::GetFileNameWithoutExtension($FileName)) - $FunctionName"
-        $StepTemplate | Add-Member -MemberType NoteProperty -Name Description -Value "Automatically generated from $FileName, function $FunctionName by OctopusStepGenerator"
+        $StepTemplate | Add-Member -MemberType NoteProperty -Name Description `
+            -Value "$(Get-FunctionSynopsis $CommandInfo.ScriptBlock.Ast)`n`nAutomatically generated from $FileName, function $FunctionName by OctopusStepGenerator"
         $StepTemplate | Add-Member -MemberType NoteProperty -Name ActionType -Value "Octopus.Script"
         $StepTemplate | Add-Member -MemberType NoteProperty -Name Version -Value 1
         $StepTemplate | Add-Member -MemberType NoteProperty -Name Properties -Value @{"Octopus.Action.Script.ScriptBody" = $ScriptBody}
@@ -246,9 +300,10 @@ try {
 
 
     Write-Host "Adding parameters"
+        $ParameterDescriptions = Get-ParameterDescriptions $CommandInfo.ScriptBlock.Ast
         foreach($Parameter in $CommandInfo.ScriptBlock.Ast.Body.ParamBlock.Parameters){
             Write-Host "`tParameter " -NoNewLine
-                Add-Parameter -ToStepTemplate $StepTemplate $Parameter
+                Add-Parameter -ToStepTemplate $StepTemplate $Parameter -Descriptions $ParameterDescriptions
             Write-Host "☑" -ForegroundColor DarkGreen
         }
     Write-Host "☑" -ForegroundColor DarkGreen
