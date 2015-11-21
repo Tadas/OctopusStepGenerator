@@ -238,7 +238,8 @@ function Add-BootstrapCode {
             }
 
             "System.Boolean" {
-                $BootstrapScript += "if(`$OctopusParameters['$ParameterName'] -ne `$null){`$FunctionParameters.Add('$ParameterName', [System.Convert]::ToBoolean(`$OctopusParameters['$ParameterName']))}`r`n"
+                # Something changed in Octopus Deploy and we get '$true' or '$false' instead of 'true'/'false' which [System.Convert]::ToBoolean() does not understand. Look foor generic 'true' instead
+                $BootstrapScript += "if(`$OctopusParameters['$ParameterName'] -ne `$null){`$FunctionParameters.Add('$ParameterName', (`$OctopusParameters['$ParameterName'] -match 'true'))}`r`n"
             }
 
             "System.Int32" {
@@ -313,7 +314,7 @@ try {
         Add-BootstrapCode $CommandInfo.ScriptBlock.Ast.Body.ParamBlock.Parameters $StepTemplate 
     Write-Host "☑" -ForegroundColor DarkGreen
 
-
+    Add-Type -AssemblyName System.Windows.Forms
     if (-not $CodeOnly) {
         Write-Host "Writing JSON to clipboard " -NoNewline
             [Windows.Forms.Clipboard]::SetText($(ConvertTo-Json $StepTemplate -Depth 10))
